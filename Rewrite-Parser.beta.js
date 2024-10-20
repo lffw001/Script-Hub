@@ -37,6 +37,8 @@ const urlArg = url.split(/\/_end_\//)[1]
 const queryObject = parseQueryString(urlArg)
 //$.log("参数:" + $.toStr(queryObject));
 
+// 来源
+const fromType = queryObject.type
 //目标app
 const targetApp = queryObject.target
 const app = targetApp.split('-')[0]
@@ -445,11 +447,55 @@ if (binaryInfo != null && binaryInfo.length > 0) {
     }
 
     //header rewrite 解析
-    if (/\sheader-(?:del|add|replace|replace-regex)\s/.test(x)) {
+    if (/\s(response-)?header-(?:del|add|replace|replace-regex)\s/.test(x)) {
       mark = getMark(y, body)
       noteK = isNoteK(x)
       x = x.replace(/^#/, '')
-      rwhdBox.push({ mark, noteK, x })
+      if (fromType === 'loon-plugin') {
+        let [_, __, prefix, isResponseHeaderRewrite, action, suffix] = x.match(
+          /^((.*?\s)(response-)?(header-(?:del|add|replace|replace-regex)\s))\s*(.*?)\s*$/
+        )
+        prefix = `${isResponseHeaderRewrite ? 'http-response' : 'http-request'} ${prefix}${action}`
+        const suffixArray = suffix.split(/\s+/)
+        const newSuffixArray = []
+        if (/\s(response-)?header-del\s/.test(prefix)) {
+          for (let index = 0; index < suffixArray.length; index++) {
+            const key = suffixArray[index]
+            newSuffixArray.push(`${/\\x20/.test(key) ? `"${key.replace(/\\x20/g, ' ')}"` : key}`)
+          }
+        } else if (/\s(response-)?header-replace-regex\s/.test(prefix)) {
+          for (let index = 0; index < suffixArray.length; index += 3) {
+            const key = suffixArray[index]
+            const value = `${
+              /\\x20/.test(suffixArray[index + 1])
+                ? `"${suffixArray[index + 1].replace(/\\x20/g, ' ')}"`
+                : suffixArray[index + 1]
+            } ${
+              /\\x20/.test(suffixArray[index + 2])
+                ? `"${suffixArray[index + 2].replace(/\\x20/g, ' ')}"`
+                : suffixArray[index + 2]
+            }`
+            if (value != null) {
+              newSuffixArray.push(`${key} ${value}`)
+            }
+          }
+        } else {
+          for (let index = 0; index < suffixArray.length; index += 2) {
+            const key = suffixArray[index]
+            const value = suffixArray[index + 1]
+            if (value != null) {
+              newSuffixArray.push(`${key} ${/\\x20/.test(value) ? `"${value.replace(/\\x20/g, ' ')}"` : value}`)
+            }
+          }
+        }
+        // console.log({ mark, noteK, x })
+        for (let index = 0; index < newSuffixArray.length; index++) {
+          let i = newSuffixArray[index]
+          rwhdBox.push({ mark, noteK, x: `${prefix}${i}` })
+        }
+      } else {
+        rwhdBox.push({ mark, noteK, x })
+      }
     }
 
     //(request|response)-(header|body) 解析
@@ -976,6 +1022,7 @@ if (binaryInfo != null && binaryInfo.length > 0) {
     noteK = rwhdBox[i].noteK ? '#' : ''
     mark = rwhdBox[i].mark ? rwhdBox[i].mark : ''
     x = rwhdBox[i].x
+    const isResponseHeaderRewrite = /^http-response\s/.test(x)
     switch (targetApp) {
       case 'surge-module':
         HeaderRewrite.push(mark + noteK + x)
@@ -983,6 +1030,9 @@ if (binaryInfo != null && binaryInfo.length > 0) {
 
       case 'loon-plugin':
         x = x.replace(/^http-(request|response)\s+/, '')
+        if (isResponseHeaderRewrite) {
+          x = x.replace(/\sheader-/, ' response-header-')
+        }
         URLRewrite.push(mark + noteK + x)
         break
 
@@ -1000,7 +1050,7 @@ if (binaryInfo != null && binaryInfo.length > 0) {
           noteK4 = '#    '
           noteK2 = '#  '
         }
-        let hdtype = /^http-response\s/.test(x) ? ' response-' : ' request-'
+        let hdtype = isResponseHeaderRewrite ? ' response-' : ' request-'
         x = x.replace(/^http-(?:request|response)\s+/, '').replace(/\s+header-/, hdtype)
         HeaderRewrite.push(mark + `${noteK4}- >-${noteKn6}` + x)
         break
